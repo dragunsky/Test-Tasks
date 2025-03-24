@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" href="data:,">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body, html { height: 100%; margin: 0; }
+        body { background: #000; color: #fff; }
+        .field-box { margin: 0 auto; width: 2000px; }
+        .field { position: relative; width: 2000px; height: 1200px; }
+        .tile { position: absolute; width: 50px; height: 50px; background-size: cover; }
+        .tileW { background-image: url('images/tile-W.png'); }
+        .tileF { background-image: url('images/tile-F.png'); }
+        .tileP { background-image: url('images/tile-P.png'); z-index: 2; }
+        .tileHP { background-image: url('images/tile-HP.png'); }
+        .tileSW { background-image: url('images/tile-SW.png'); }
+        .tileE { background-image: url('images/tile-E.png'); }
+        .health { position: absolute; top: 0; left: 0; height: 3px; background: #f00; }
+        .hero-health { background: #0f0 !important; }
+    </style>
+</head>
+<body>
+    <h1>Игровое поле</h1>
+    <div class="field-box"><div class="field"></div></div>
+
+    <script>
+        class Game {
+            constructor() {
+                this.mapSize = { w: 40, h: 24 };
+                this.tileSize = 50;
+                this.hero = { x: 0, y: 0, health: 100, attack: 25 };
+                this.enemies = [];
+                this.items = [];
+                this.map = [];
+                this.rooms = [];
+                this.heroBaseAttack = 25;
+            }
+
+            init() {
+                this.generateMap();
+                this.generateRooms(5 + Math.floor(Math.random() * 6));
+                this.connectRooms();
+                this.addHashtagPassages();
+                this.placeItems();
+                this.placeHero();
+                this.placeEnemies(10);
+                this.drawMap();
+                this.setupControls();
+                setInterval(() => this.moveEnemies(), 1000);
+            }
+
+            generateMap() {
+                this.map = Array(this.mapSize.h).fill().map(() => 
+                    Array(this.mapSize.w).fill('W')
+                );
+            }
+
+            generateRooms(count) {
+                for (let i = 0; i < count; i++) {
+                    let room, tries = 0;
+                    do {
+                        room = this.createRandomRoom();
+                        tries++;
+                    } while (tries < 1000 && this.rooms.some(r => this.roomsOverlap(r, room)));
+                    
+                    if (tries < 1000) {
+                        this.rooms.push(room);
+                        this.carveRoom(room);
+                    }
+                }
+            }
+
+            createRandomRoom() {
+                const w = 3 + Math.floor(Math.random() * 6);
+                const h = 3 + Math.floor(Math.random() * 6);
+                const x = 1 + Math.floor(Math.random() * (this.mapSize.w - w - 1));
+                const y = 1 + Math.floor(Math.random() * (this.mapSize.h - h - 1));
+                
+                return { 
+                    x, y, w, h, 
+                    center: {
+                        x: Math.floor(x + w/2),
+                        y: Math.floor(y + h/2)
+                    }
+                };
+            }
+
+            roomsOverlap(a, b) {
+                return a.x < b.x + b.w && a.x + a.w > b.x &&
+                       a.y < b.y + b.h && a.y + a.h > b.y;
+            }
+
+            carveRoom(room) {
+                for (let y = room.y; y < room.y + room.h; y++) {
+                    for (let x = room.x; x < room.x + room.w; x++) {
+                        this.map[y][x] = 'F';
+                    }
+                }
+            }
+
+            connectRooms() {
+                this.rooms.forEach((room, i) => {
+                    if (i > 0) this.createPassage(this.rooms[i-1].center, room.center);
+                });
+            }
+
+            createPassage(start, end) {
+                for (let x = Math.min(start.x, end.x); x <= Math.max(start.x, end.x); x++) {
+                    this.map[start.y][x] = 'F';
+                }
+                for (let y = Math.min(start.y, end.y); y <= Math.max(start.y, end.y); y++) {
+                    this.map[y][end.x] = 'F';
+                }
+            }
+
+            addHashtagPassages() {
+                const hLines = this.getUniqueRandom(3 + Math.floor(Math.random() * 3), this.mapSize.h);
+                hLines.forEach(y => {
+                    for (let x = 0; x < this.mapSize.w; x++) {
+                        this.map[y][x] = 'F';
+                    }
+                });
+
+                const vLines = this.getUniqueRandom(3 + Math.floor(Math.random() * 3), this.mapSize.w);
+                vLines.forEach(x => {
+                    for (let y = 0; y < this.mapSize.h; y++) {
+                        this.map[y][x] = 'F';
+                    }
+                });
+            }
+
+            getUniqueRandom(count, max) {
+                const set = new Set();
+                while (set.size < count) {
+                    set.add(Math.floor(Math.random() * max));
+                }
+                return Array.from(set);
+            }
+
+            getEmptyPositions() {
+                const positions = [];
+                for (let y = 0; y < this.mapSize.h; y++) {
+                    for (let x = 0; x < this.mapSize.w; x++) {
+                        if (this.map[y][x] === 'F') positions.push({x, y});
+                    }
+                }
+                return positions;
+            }
+
+            placeItems() {
+                this.addEntities(2, 'SW');
+                this.addEntities(10, 'HP');
+            }
+
+            addEntities(count, type) {
+                for (let i = 0; i < count; i++) {
+                    const taken = [...this.items, ...this.enemies, this.hero];
+                    const pos = this.getRandomEmptyPosition(taken);
+                    if (pos) this.items.push({ ...pos, type });
+                }
+            }
+
+            placeHero() {
+                const pos = this.getRandomEmptyPosition([...this.enemies, ...this.items]);
+                if (pos) this.hero = { 
+                    ...pos, 
+                    health: 100, 
+                    attack: this.heroBaseAttack
+                };
+            }
+
+            placeEnemies(count) {
+                for (let i = 0; i < count; i++) {
+                    const taken = [...this.enemies, this.hero, ...this.items];
+                    const pos = this.getRandomEmptyPosition(taken);
+                    if (pos) this.enemies.push({ 
+                        ...pos, 
+                        health: 50,
+                        maxHealth: 50, 
+                        attack: 5 
+                    });
+                }
+            }
+
+            getRandomEmptyPosition(exclude = []) {
+                const positions = this.getEmptyPositions().filter(pos => 
+                    !exclude.some(e => e.x === pos.x && e.y === pos.y)
+                );
+                return positions[Math.floor(Math.random() * positions.length)];
+            }
+
+            drawMap() {
+                $('.field').empty();
+                this.map.forEach((row, y) => row.forEach((cell, x) => {
+                    const tile = $('<div>').addClass(`tile tile${cell}`)
+                        .css({ left: x*50, top: y*50 });
+                    
+                    if (x === this.hero.x && y === this.hero.y) {
+                        tile.addClass('tileP');
+                        tile.append($('<div>').addClass('health hero-health')
+                            .css({ width: `${this.hero.health}%` }));
+                    }
+                    
+                    this.items.forEach(i => {
+                        if (i.x === x && i.y === y) tile.addClass(`tile${i.type}`);
+                    });
+            
+            this.enemies.forEach(e => {
+                if (e.health > 0 && e.x === x && e.y === y) {
+                    tile.addClass('tileE');
+                    tile.append($('<div>').addClass('health')
+                        .css({ 
+                            width: `${(e.health / e.maxHealth) * 100}%`
+                        }));
+                }
+            });
+                    
+                    $('.field').append(tile);
+                }));
+            }
+
+            setupControls() {
+                $(document).on('keydown', e => {
+                    const keyMap = {
+                        'ц': 'w', 'ы': 's', 'ф': 'a', 'в': 'd',
+                        'w': 'w', 's': 's', 'a': 'a', 'd': 'd' 
+                    };
+                    
+                    const move = keyMap[e.key.toLowerCase()];
+                    const moves = {
+                        w: [0, -1],
+                        s: [0, 1],
+                        a: [-1, 0],
+                        d: [1, 0]
+                    };
+
+                    if (move && moves[move]) {
+                        this.moveHero(...moves[move]);
+                    }
+                    
+                    if (e.key === ' ') {
+                        this.heroAttack();
+                    }
+                });
+            }
+
+            moveHero(dx, dy) {
+                const newPos = { x: this.hero.x + dx, y: this.hero.y + dy };
+                if (this.isValidPos(newPos)) {
+                    Object.assign(this.hero, newPos);
+                    this.checkItems();
+                    this.checkEnemyAttack();
+                    this.drawMap();
+                }
+            }
+
+            isValidPos(pos) {
+                if (pos.y < 0 || pos.y >= this.mapSize.h) return false;
+                if (pos.x < 0 || pos.x >= this.mapSize.w) return false;
+                return this.map[pos.y][pos.x] === 'F';
+            }
+
+            checkItems() {
+                this.items = this.items.filter(i => {
+                    if (i.x !== this.hero.x || i.y !== this.hero.y) return true;
+                    if (i.type === 'HP') {
+                        this.hero.health = Math.min(100, this.hero.health + 20);
+                    }
+                    if (i.type === 'SW') {
+                        this.heroBaseAttack += 25;
+                        this.hero.attack = this.heroBaseAttack; 
+                    }
+                    return false;
+                });
+            }
+
+            heroAttack() {
+                this.enemies = this.enemies.filter(e => {
+                    const distance = Math.abs(e.x - this.hero.x) + Math.abs(e.y - this.hero.y);
+                    if (distance <= 1) {
+                        e.health -= this.hero.attack;
+                        if (e.health <= 0) return false;
+                    }
+                    return e.health > 0;
+                });
+                this.drawMap();
+            }
+
+            moveEnemies() {
+                this.enemies = this.enemies.filter(e => e.health > 0);
+                
+                this.enemies.forEach(e => {
+                    const moves = [[-1,0], [1,0], [0,-1], [0,1]];
+                    const [dx, dy] = moves[Math.floor(Math.random() * 4)];
+                    const newPos = { x: e.x + dx, y: e.y + dy };
+                    if (this.isValidPos(newPos)) Object.assign(e, newPos);
+                });
+                this.checkEnemyAttack();
+                this.drawMap();
+            }
+
+            checkEnemyAttack() {
+                this.enemies.forEach(e => {
+                    if (Math.abs(e.x - this.hero.x) + Math.abs(e.y - this.hero.y) === 1) {
+                        this.hero.health -= e.attack;
+                        if (this.hero.health < 0) this.hero.health = 0;
+                    }
+                });
+                if (this.hero.health <= 0) alert('Game Over!');
+            }
+        }
+
+        new Game().init();
+    </script>
+</body>
+</html>
